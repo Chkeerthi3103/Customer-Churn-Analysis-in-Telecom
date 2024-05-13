@@ -1,0 +1,333 @@
+---
+title: "Machine Learning Project"
+---
+
+
+**Your Name**: Keerthi Reddy Chintha Reddy
+**Your G Number**: #G01394014
+
+
+
+```{r warning = FALSE, message = FALSE}
+# Suppress dplyr summarise grouping warning messages
+options(dplyr.summarise.inform = FALSE)
+
+## Add R libraries here
+library(tidyverse)
+library(tidymodels)
+library(discrim)
+library(klaR)
+library(kknn)
+library(magrittr)
+library(dplyr)
+library(ggplot2)
+library(vip)
+
+
+# Load the dataset
+telecom_df <- readRDS(url('https://gmubusinessanalytics.netlify.app/data/telecom_df.rds'))
+telecom_df
+
+```
+
+
+
+# Question 1
+
+
+**Question**: Is there any relationship between canceled services and monthly charges?
+
+
+**Answer**: It is true that cancel service and monthly-charge are related. We can see from the figure that customers are more likely to stop using a service when their monthly fee is between $70 and $100. People who pay a monthly fee in between $100 and $120 continue to use the service. High-end service shouldn't be an issue, in my opinion, but the corporation should examine mid-range service, which is charged at between 70 and 100 dollars per month. Mid-level has the most users and the most dissatisfied users, as far as we can tell.
+
+
+```{r}
+
+telecom_df %>% group_by(canceled_service) %>% 
+                  summarise(n_call = n(),
+                            min_charges = min(monthly_charges),
+                            avg_charges = mean(monthly_charges),
+                            max_charges = max(monthly_charges),
+                            sd_charges = sd(monthly_charges),
+                            pct_less_70 = mean(monthly_charges <= 70))
+ggplot(data = telecom_df , aes(x = monthly_charges, fill = canceled_service)) + 
+   geom_histogram(aes(y = ..density..), color = "white", bins = 20) +
+   facet_wrap(~ canceled_service, nrow = 2) +
+   labs(title = "Monthly charges Distribution by Status (Canceled Services - Yes/No)",
+           x = "Monthly Charges", y = "Canceled Services")
+
+
+```
+
+
+
+# Question 2
+
+
+**Question**: What are the factors that are associated with customers canceling their service?
+
+
+**Answer**: According to the plot,customer with single line cellular service are canceling within 20 months. Meanwhile customer with multiple line cellular service are canceling mostly in between 20 to 40 months. With this we can conclude that company should focus on multiple line cellular service customers with great deals.
+
+
+```{r}
+telecom_df %>% group_by(cellular_service, device_protection, tech_support) %>% 
+                  summarise(n_call = n())
+ggplot(data = telecom_df, aes(x=months_with_company, fill = canceled_service))+
+  geom_boxplot(aes (y =  cellular_service),color = "blue") +
+   labs(title = "Canceled Services vs cellular service",
+           x = "Months With Company", y = "Cellular Service")+
+            theme(plot.title = element_text(size=10))
+
+
+```
+
+
+# Question 3
+
+
+**Question**: Is there any relationship between canceled service and months with company?
+
+
+**Answer**:According to the plot, customers who have been with a company for 0 – 10 months tend to cancel their services frequently, whereas customers who have been with the company for 60+ months tend to stay.
+
+```{r}
+  ggplot(telecom_df, aes(x =canceled_service, y = months_with_company	 , fill = canceled_service)) + 
+  geom_violin() +
+  geom_boxplot(fill = NA, width = 0.1, colour = "black") +
+  labs(title = "Relation between Months with Company and Canceled Services",
+           x = "Canceled Services", y = "Months with company")
+
+
+
+```
+
+
+
+# Question 4
+
+
+**Question**: What is the relationship between Canceled Service and Average Call Minutes?
+
+
+**Answer**: The summary data table shows that 427 customers, whose average call minutes were roughly 376, discontinued the service. Customers whose average call length is less than 340 minutes do not cancel their subscriptions, while those whose average call length is greater than 370 minutes disconnected their service.
+
+```{r}
+telecom_df %>% group_by(canceled_service)%>%                 
+                            summarise(n_call = n(),
+                            avg_call_min = mean(avg_call_mins),
+                            sd_call_min = sd(avg_call_mins)) 
+
+ggplot(data = telecom_df, aes(x=avg_call_mins, fill =  canceled_service))+
+  geom_histogram(color = "orange", bins = 20)+
+  facet_wrap(~  canceled_service) +
+   labs(title = "Cancelled Services according to Average monthly call minutes",
+           x = "Call_Minutes", y = "Total amount of calls")
+
+```
+
+
+
+# Question 5
+
+
+**Question**: Is there any relationship between average international minutes and canceled service?
+
+
+**Answer**: The graph reveals that a significant part of international users are hesitant to cancel their subscriptions. This is especially true when the average international call time exceeds 175 minutes, which indicates that if we want to make improvements, we should focus on attracting customers with average international call times of less than 175 minutes.
+
+
+```{r}
+ggplot(telecom_df, aes(x=avg_intl_mins, y=canceled_service, color="red")) + 
+    geom_point(size=6)+ coord_flip()
+
+
+```
+
+
+
+
+# Machine Learning
+
+
+# Model 1
+
+#Logistic Regression
+
+```{r}
+set.seed(9999)
+
+pd <- initial_split(telecom_df)
+#str(pd)
+pd
+
+
+Training1 <- training(pd)
+tes1 <- testing(pd)
+
+
+
+tel_folds <- vfold_cv(Training1, v = 10)
+tel_folds
+
+
+telecom_recipe <- recipe(canceled_service ~ ., data = Training1) %>% 
+                 step_YeoJohnson(all_numeric(), -all_outcomes()) %>% 
+                 step_normalize(all_numeric(), -all_outcomes()) %>% 
+                 step_dummy(all_nominal(), -all_outcomes())
+
+telecom_recipe %>% 
+  prep(training = Training1) %>% 
+  bake(new_data = NULL)
+  
+  
+logistic_model <- logistic_reg() %>% 
+                  set_engine('glm') %>% 
+                  set_mode('classification')
+
+logistic_wf <- workflow() %>% 
+               add_model(logistic_model) %>% 
+               add_recipe(telecom_recipe)
+
+logistic_fit <- logistic_wf %>% 
+                last_fit(split = pd)
+
+
+logistic_results <-  logistic_fit %>% 
+                     collect_predictions()
+
+roc_curve(logistic_results, 
+          truth = canceled_service, 
+          estimate = .pred_yes) %>% 
+  autoplot()
+
+
+model <- logistic_fit %>% 
+            extract_fit_parsnip()
+
+vip(model)
+
+
+```
+
+
+
+
+# Model 2
+
+# LDA model
+
+```{r}
+
+lm <- discrim_regularized(frac_common_cov = 1) %>% 
+             set_engine('klaR') %>% 
+             set_mode('classification')
+
+wf <- workflow() %>% 
+          add_model(lm) %>% 
+          add_recipe(telecom_recipe)
+
+lfit <- wf %>% 
+           last_fit(split = pd)
+
+lr <-  lfit %>% 
+                collect_predictions()
+
+roc_curve(lr, 
+          truth = canceled_service, 
+          estimate = .pred_yes) %>% 
+  autoplot()
+
+roc_auc(lr, 
+        truth = canceled_service, 
+        .pred_yes)
+
+conf_mat(lr, 
+         truth = canceled_service, 
+         estimate = .pred_class)
+```
+
+
+
+
+
+# Model 3
+
+#Random Forest
+
+```{r}
+rf_model <- rand_forest(mtry = tune(),
+                        trees = tune(),
+                        min_n = tune()) %>% 
+            set_engine('ranger', importance = "impurity") %>% 
+            set_mode('classification')
+
+rfwfl <- workflow() %>% 
+               add_model(rf_model) %>% 
+               add_recipe(telecom_recipe)
+# Hyperparameter Tuning
+set.seed(314)
+
+rf_grid <- grid_random(mtry() %>% range_set(c(2, 4)),
+                       trees(),
+                       min_n(),
+                       size = 10)
+
+
+rftu <- rfwfl %>% tune_grid(resamples = tel_folds,grid = rf_grid)
+
+
+br <- rftu %>% 
+           select_best(metric = 'roc_auc')
+
+# View the best parameters
+
+
+
+fwfl <- rf_workflow %>% 
+                     finalize_workflow(br)
+#fit the model
+rwt <- fwfl %>% 
+             fit(data = Training1)
+
+rit <- rwt %>% 
+          pull_workflow_fit()
+
+vip(rit)
+
+```
+
+
+
+
+
+**Summary**
+
+
+Introduction:
+
+The telecom company continues to lose customers, and the rate of canceled services is rising. The telecom provider is attempting to identify the main factor influencing their customer's decision to cancel the service. The objective of this project is to employ machine learning methods to identify the main cause and assist the business in lowering the likelihood that the client will cancel the service.
+
+
+Highlights:
+
+Exploratory data analysis can assist us in clarifying the issue and uncovering important details. I tried using numerical columns and factors during the data investigation to determine how they are related to canceled service.The details are as follows,
+1.Customers are more likely to stop using a service when their monthly fee is between $70 and $100, as shown by the graph of canceled services and monthly charges. People who continue to use the service pay a monthly fee of between $100 and $120. High-end service shouldn't be a problem, but the business could look into mid-range service, which costs between $70 and $100 per month. As far as we can tell, mid-level has both the most users and the most disgruntled users.
+2.Customers with single line cellular service cancel within 20 months, per the graph between canceled service and cellular service. In the meantime, customers with numerous lines for cellular service typically cancel in 20 to 40 months. This leads us to the conclusion that a business should offer incredible deals to customers of multiple line cellular services.
+3.Consumers who have been with a company for 0 to 10 months have a tendency to cancel their services regularly, whereas customers who have been with the company for 60+ months have a tendency to stay.
+4.Customers whose average call length is less than 340 minutes do not cancel their subscriptions, while those whose average call length is larger than 370 minutes removed their account, according to a plot between canceled service and average call minutes.
+
+
+Best classification model:
+
+I used Logistic Regression, the LDA model, and Random Forest to identify the most important variables that have the most effects on service cancellation. and utilized ROC AUC to assess the model's precision. The more accurate the model's prediction, the higher the ROC AUC. Additionally, use the most precise model to identify the elements that have a significant impact on service cancellation. The Logistic Regression model's ROC AUC is 85.435%. The LDA model's ROC AUC is 85.243%. The Random Forest model's ROC AUC is 85.087%. I try to identify the significant element from the model after confirming that the Logistic Regression model is the best model.The vip function reveals four factors that have a major impact on user service cancellation. Avg call mins, avg intl mins, streaming movies, and months with company are four criteria. The two most crucial factors are avg call mins and avg intl mins out of the four.
+
+
+Recommendations:
+
+The findings of the Logistic Regression model show that average call minutes and average international minutes are the most crucial variables. Since consumers are highly sensitive to these factors, I advise companies to look into why some customers are unhappy with it. According to the relationship diagram between avg international minutes and cancelled service, it can be inferred that customers who use the service for shorter periods of time are more likely to cancel it. As a result, I advise the company to develop a strategy for those customers.427 out of 1175 customers left for an unclear cause. The company should collect customer feedback in order to keep data records and analyze customer reviews of services in order to better understand the perspectives of their customers.Customers who utilize digital internet services have a higher chance of losing than those who use fiber services. In order to increase the user base, I advise the corporation to discourage clients from switching to digital internet services and instead urge them to do so.One-year and two-year contracts have lower cancellation rates among users. Users of month to month, on the other hand, are more likely to stop using the service. I thus advise that the corporation present more enticing options for consumers of month-to-month and promote their use. Use a one- or two-year contract.
+
+
+
+
+
